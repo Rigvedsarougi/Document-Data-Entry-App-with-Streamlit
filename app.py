@@ -4,7 +4,7 @@ import io
 import os
 import uuid
 import json
-from pdf2image import convert_from_bytes
+import fitz  # PyMuPDF
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.utils import ImageReader
@@ -41,7 +41,13 @@ init_session_state()
 
 # Helper functions
 def convert_pdf_to_images(pdf_file):
-    return convert_from_bytes(pdf_file.read())
+    doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
+    images = []
+    for page in doc:
+        pix = page.get_pixmap(dpi=200)
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        images.append(img)
+    return images
 
 def save_template():
     if not st.session_state.template_name:
@@ -307,21 +313,21 @@ elif st.session_state.mode == "input" and st.session_state.document_image and st
                     value=st.session_state.field_values.get(field["alias"], "")
                 )
             elif field["type"] == "Signature":
-                st.session_state.field_values[field["alias"]] = st.file_uploader(
+                sig_file = st.file_uploader(
                     f"{field['alias']} (Signature Image)",
                     type=["png", "jpg", "jpeg"],
                     key=f"signature_{field['alias']}"
                 )
-                if st.session_state.field_values[field["alias"]]:
-                    st.session_state.field_values[field["alias"]] = st.session_state.field_values[field["alias"]].read()
+                if sig_file:
+                    st.session_state.field_values[field["alias"]] = sig_file.read()
             elif field["type"] == "Image":
-                st.session_state.field_values[field["alias"]] = st.file_uploader(
+                img_file = st.file_uploader(
                     f"{field['alias']} (Image)",
                     type=["png", "jpg", "jpeg"],
                     key=f"image_{field['alias']}"
                 )
-                if st.session_state.field_values[field["alias"]]:
-                    st.session_state.field_values[field["alias"]] = st.session_state.field_values[field["alias"]].read()
+                if img_file:
+                    st.session_state.field_values[field["alias"]] = img_file.read()
         
         submitted = st.form_submit_button("Generate Final Document")
         
