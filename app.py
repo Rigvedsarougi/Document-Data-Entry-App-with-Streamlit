@@ -9,6 +9,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.utils import ImageReader
 import tempfile
+from streamlit_draggable import draggable  # Custom draggable component
 
 # Constants
 FIELD_TYPES = ["Text", "Image", "Signature"]
@@ -36,6 +37,10 @@ def init_session_state():
         st.session_state.template_name = ""
     if "field_values" not in st.session_state:
         st.session_state.field_values = {}
+    if "selected_field_id" not in st.session_state:
+        st.session_state.selected_field_id = None
+    if "drag_data" not in st.session_state:
+        st.session_state.drag_data = {"x": 0, "y": 0}
 
 init_session_state()
 
@@ -89,10 +94,7 @@ def create_pdf_with_fields():
         st.warning("No document loaded")
         return None
     
-    # For multi-page PDFs, we'll just use the first page for this example
     img = st.session_state.document_pages[st.session_state.current_page]
-    
-    # Create a new image with the fields
     img_with_fields = img.copy()
     draw = ImageDraw.Draw(img_with_fields)
     
@@ -120,7 +122,7 @@ def create_pdf_with_fields():
                 outline="blue",
                 width=1
             )
-            if value:  # Assuming value is an image for signature
+            if value:
                 try:
                     signature_img = Image.open(io.BytesIO(value))
                     signature_img = signature_img.resize((field["width"], field["height"]))
@@ -133,7 +135,7 @@ def create_pdf_with_fields():
                 outline="green",
                 width=1
             )
-            if value:  # Assuming value is an image
+            if value:
                 try:
                     field_img = Image.open(io.BytesIO(value))
                     field_img = field_img.resize((field["width"], field["height"]))
@@ -141,12 +143,17 @@ def create_pdf_with_fields():
                 except:
                     draw.text((field["x"], field["y"]), "Image", fill="black", font=font)
     
-    # Convert to PDF
     pdf_bytes = io.BytesIO()
     img_with_fields.save(pdf_bytes, format="PDF")
     pdf_bytes.seek(0)
-    
     return pdf_bytes
+
+def handle_drag(field_id, x, y):
+    for i, field in enumerate(st.session_state.fields):
+        if field["id"] == field_id:
+            st.session_state.fields[i]["x"] = x
+            st.session_state.fields[i]["y"] = y
+            break
 
 # UI Layout
 st.title("Document Data Entry App")
@@ -173,7 +180,6 @@ if uploaded_file:
     
     st.session_state.document_image = st.session_state.document_pages[0]
     
-    # Show page selector for multi-page PDFs
     if len(st.session_state.document_pages) > 1:
         st.session_state.current_page = st.selectbox(
             "Select Page",
@@ -207,7 +213,6 @@ with col3:
 if st.session_state.mode == "layout" and st.session_state.document_image:
     st.subheader("Layout Mode - Add Fields to Document")
     
-    # Field properties form
     with st.expander("Add New Field"):
         field_type = st.selectbox("Field Type", FIELD_TYPES, key="field_type")
         alias = st.text_input("Field Alias/Label", key="field_alias")
@@ -227,36 +232,61 @@ if st.session_state.mode == "layout" and st.session_state.document_image:
             }
             st.session_state.fields.append(new_field)
             st.session_state.current_field = new_field["id"]
+            st.session_state.selected_field_id = new_field["id"]
             st.success(f"Added {field_type} field: {alias}")
     
-    # Display document with fields
     st.subheader("Document Preview with Fields")
     
-    # Create a canvas to display the document and fields
-    img = st.session_state.document_image.copy()
-    draw = ImageDraw.Draw(img)
+    # Create a container for the document with draggable fields
+    doc_container = st.container()
     
-    for field in st.session_state.fields:
-        if field["page"] != st.session_state.current_page:
-            continue
+    with doc_container:
+        # Display the document image
+        st.image(st.session_state.document_image, use_column_width=True)
+        
+        # Display draggable fields
+        for field in st.session_state.fields:
+            if field["page"] != st.session_state.current_page:
+                continue
+                
+            color = "red" if field["type"] == "Text" else "green" if field["type"] == "Image" else "blue"
             
-        color = "red" if field["type"] == "Text" else "green" if field["type"] == "Image" else "blue"
-        draw.rectangle(
-            [field["x"], field["y"], field["x"] + field["width"], field["y"] + field["height"]],
-            outline=color,
-            width=2
-        )
-        draw.text((field["x"], field["y"] - 15), field["alias"], fill=color)
+            # Create a draggable component for each field
+            with draggable(
+                key=f"drag_{field['id']}",
+                default_position={"x": field["x"], "y": field["y"]},
+                on_drag_end=lambda x, y, fid=field["id"]: handle_drag(fid, x, y)
+            ):
+                st.markdown(
+                    f"""
+                    <div style="
+                        position: absolute;
+                        left: {field['x']}px;
+                        top: {field['y']}px;
+                        width: {field['width']}px;
+                        height: {field['height']}px;
+                        border: 2px solid {color};
+                        background-color: rgba(255, 255, 255, 0.5);
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        cursor: move;
+                    ">
+                        {field['alias']}
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
     
-    st.image(img, use_column_width=True)
-    
-    # Field position adjustment
+    # Field position adjustment (manual)
     if st.session_state.fields:
         st.subheader("Field Position Adjustment")
+        
         selected_field = st.selectbox(
             "Select Field to Adjust",
             [f"{f['alias']} ({f['type']})" for f in st.session_state.fields if f["page"] == st.session_state.current_page],
-            index=0
+            index=0,
+            key="field_select"
         )
         
         selected_field_index = next(
@@ -266,16 +296,16 @@ if st.session_state.mode == "layout" and st.session_state.document_image:
         
         col1, col2 = st.columns(2)
         with col1:
-            new_x = st.number_input("X Position", value=st.session_state.fields[selected_field_index]["x"])
+            new_x = st.number_input("X Position", value=st.session_state.fields[selected_field_index]["x"], key="x_pos")
         with col2:
-            new_y = st.number_input("Y Position", value=st.session_state.fields[selected_field_index]["y"])
+            new_y = st.number_input("Y Position", value=st.session_state.fields[selected_field_index]["y"], key="y_pos")
         
         if st.button("Update Position"):
             st.session_state.fields[selected_field_index]["x"] = new_x
             st.session_state.fields[selected_field_index]["y"] = new_y
             st.success("Position updated!")
         
-        if st.button("Delete Field"):
+        if st.button("Delete Field", key="delete_field"):
             del st.session_state.fields[selected_field_index]
             st.success("Field deleted!")
 
@@ -283,7 +313,6 @@ if st.session_state.mode == "layout" and st.session_state.document_image:
 elif st.session_state.mode == "input" and st.session_state.document_image and st.session_state.fields:
     st.subheader("Input Mode - Enter Data for Fields")
     
-    # Display document preview with field areas marked
     img = st.session_state.document_image.copy()
     draw = ImageDraw.Draw(img)
     
@@ -301,7 +330,6 @@ elif st.session_state.mode == "input" and st.session_state.document_image and st
     
     st.image(img, use_column_width=True, caption="Document with field locations")
     
-    # Input form for each field
     with st.form("data_input_form"):
         for field in st.session_state.fields:
             if field["page"] != st.session_state.current_page:
