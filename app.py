@@ -9,7 +9,6 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.utils import ImageReader
 import tempfile
-from streamlit_draggable import draggable  # Custom draggable component
 
 # Constants
 FIELD_TYPES = ["Text", "Image", "Signature"]
@@ -148,7 +147,7 @@ def create_pdf_with_fields():
     pdf_bytes.seek(0)
     return pdf_bytes
 
-def handle_drag(field_id, x, y):
+def update_field_position(field_id, x, y):
     for i, field in enumerate(st.session_state.fields):
         if field["id"] == field_id:
             st.session_state.fields[i]["x"] = x
@@ -237,48 +236,25 @@ if st.session_state.mode == "layout" and st.session_state.document_image:
     
     st.subheader("Document Preview with Fields")
     
-    # Create a container for the document with draggable fields
-    doc_container = st.container()
+    # Display the document with fields
+    img = st.session_state.document_image.copy()
+    draw = ImageDraw.Draw(img)
     
-    with doc_container:
-        # Display the document image
-        st.image(st.session_state.document_image, use_column_width=True)
-        
-        # Display draggable fields
-        for field in st.session_state.fields:
-            if field["page"] != st.session_state.current_page:
-                continue
-                
-            color = "red" if field["type"] == "Text" else "green" if field["type"] == "Image" else "blue"
+    for field in st.session_state.fields:
+        if field["page"] != st.session_state.current_page:
+            continue
             
-            # Create a draggable component for each field
-            with draggable(
-                key=f"drag_{field['id']}",
-                default_position={"x": field["x"], "y": field["y"]},
-                on_drag_end=lambda x, y, fid=field["id"]: handle_drag(fid, x, y)
-            ):
-                st.markdown(
-                    f"""
-                    <div style="
-                        position: absolute;
-                        left: {field['x']}px;
-                        top: {field['y']}px;
-                        width: {field['width']}px;
-                        height: {field['height']}px;
-                        border: 2px solid {color};
-                        background-color: rgba(255, 255, 255, 0.5);
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        cursor: move;
-                    ">
-                        {field['alias']}
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
+        color = "red" if field["type"] == "Text" else "green" if field["type"] == "Image" else "blue"
+        draw.rectangle(
+            [field["x"], field["y"], field["x"] + field["width"], field["y"] + field["height"]],
+            outline=color,
+            width=2
+        )
+        draw.text((field["x"], field["y"] - 15), field["alias"], fill=color)
     
-    # Field position adjustment (manual)
+    st.image(img, use_column_width=True)
+    
+    # Field position adjustment
     if st.session_state.fields:
         st.subheader("Field Position Adjustment")
         
@@ -296,18 +272,28 @@ if st.session_state.mode == "layout" and st.session_state.document_image:
         
         col1, col2 = st.columns(2)
         with col1:
-            new_x = st.number_input("X Position", value=st.session_state.fields[selected_field_index]["x"], key="x_pos")
+            new_x = st.number_input("X Position", 
+                                   value=st.session_state.fields[selected_field_index]["x"], 
+                                   key="x_pos",
+                                   on_change=lambda: update_field_position(
+                                       st.session_state.fields[selected_field_index]["id"],
+                                       st.session_state.x_pos,
+                                       st.session_state.fields[selected_field_index]["y"]
+                                   ))
         with col2:
-            new_y = st.number_input("Y Position", value=st.session_state.fields[selected_field_index]["y"], key="y_pos")
-        
-        if st.button("Update Position"):
-            st.session_state.fields[selected_field_index]["x"] = new_x
-            st.session_state.fields[selected_field_index]["y"] = new_y
-            st.success("Position updated!")
+            new_y = st.number_input("Y Position", 
+                                   value=st.session_state.fields[selected_field_index]["y"], 
+                                   key="y_pos",
+                                   on_change=lambda: update_field_position(
+                                       st.session_state.fields[selected_field_index]["id"],
+                                       st.session_state.fields[selected_field_index]["x"],
+                                       st.session_state.y_pos
+                                   ))
         
         if st.button("Delete Field", key="delete_field"):
             del st.session_state.fields[selected_field_index]
             st.success("Field deleted!")
+            st.experimental_rerun()
 
 # Input Mode
 elif st.session_state.mode == "input" and st.session_state.document_image and st.session_state.fields:
